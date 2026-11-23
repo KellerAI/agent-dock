@@ -1,0 +1,40 @@
+[project]
+name = "agent-dock"
+version = "0.1.0"
+description = "macOS menu-bar inbox for approving Claude Code and Codex permission requests"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "pyobjc-core>=10.3; sys_platform == 'darwin'",
+    "pyobjc-framework-Cocoa>=10.3; sys_platform == 'darwin'",
+]
+
+[project.scripts]
+agent-dock = "agent_dock.cli:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=0.23",
+    "ruff>=0.5",
+]
+
+[build-system]
+requires = ["uv_build>=0.8.0,<0.14.0"]
+build-backend = "uv_build"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+addopts = "-q"
+markers = [
+    "macos: requires real macOS AppKit (skipped elsewhere)",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+ignore = ["E501"]
