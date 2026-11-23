@@ -100,6 +100,8 @@ fetched 2026-11-23):
 menu-bar badge and inbox, three concurrent requests, always-allow form, and native fallback
 after quitting the app all behaved as specified.
 
-Not yet covered by that run: interactive Claude Code CLI (native dialog while the hook waits,
-45 s timeout hand-off), real Codex sessions and `/hooks` trust, full-screen apps / Stage Manager,
+Interactive Claude Code CLI on the Mac (same day): allow, deny with note, file-write card,
+45 s timeout hand-off to the native prompt and "Answer in terminal" all confirmed working.
+
+Not yet covered: real Codex sessions and `/hooks` trust, full-screen apps / Stage Manager,
 multiple displays, VoiceOver.
