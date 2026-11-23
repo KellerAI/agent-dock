@@ -11,19 +11,25 @@ from collections.abc import Callable
 import objc
 from AppKit import (
     NSBackingStoreBuffered,
+    NSBezierPath,
     NSButton,
     NSColor,
     NSControlSizeSmall,
     NSFont,
     NSFontWeightRegular,
     NSFontWeightSemibold,
+    NSImage,
     NSLayoutAttributeCenterY,
     NSLayoutAttributeLeading,
     NSLayoutPriorityDefaultLow,
     NSLineBreakByTruncatingTail,
+    NSLineBreakByWordWrapping,
     NSPanel,
+    NSScroller,
+    NSScrollerStyleLegacy,
     NSScrollView,
     NSStackView,
+    NSStackViewDistributionFill,
     NSStatusWindowLevel,
     NSTextField,
     NSTrackingActiveAlways,
@@ -44,7 +50,7 @@ from AppKit import (
     NSWindowStyleMaskBorderless,
     NSWindowStyleMaskNonactivatingPanel,
 )
-from Foundation import NSMakeRect, NSObject
+from Foundation import NSMakeRect, NSObject, NSRunLoop, NSRunLoopCommonModes
 
 # ---- callbacks ---------------------------------------------------------------
 
@@ -97,9 +103,10 @@ class Ticker(NSObject):
             return
         from Foundation import NSTimer
 
-        self._timer = NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
+        self._timer = NSTimer.timerWithTimeInterval_target_selector_userInfo_repeats_(
             max(0.01, delay), self, "fire:", None, False
         )
+        NSRunLoop.mainRunLoop().addTimer_forMode_(self._timer, NSRunLoopCommonModes)
 
     def fire_(self, timer):
         self._timer = None
@@ -136,14 +143,14 @@ def make_panel() -> DockPanel:
         False,
     )
     panel.allow_key = False
-    panel.setLevel_(NSStatusWindowLevel)
     panel.setCollectionBehavior_(
         NSWindowCollectionBehaviorCanJoinAllSpaces
         | NSWindowCollectionBehaviorFullScreenAuxiliary
         | NSWindowCollectionBehaviorStationary
         | NSWindowCollectionBehaviorIgnoresCycle
     )
-    panel.setFloatingPanel_(True)
+    panel.setFloatingPanel_(True)  # note: this resets the level, so set the level after it
+    panel.setLevel_(NSStatusWindowLevel)
     panel.setHidesOnDeactivate_(False)
     panel.setBecomesKeyOnlyIfNeeded_(True)
     panel.setWorksWhenModal_(True)
@@ -199,10 +206,22 @@ def effect_background() -> NSVisualEffectView:
     v.setMaterial_(NSVisualEffectMaterialPopover)
     v.setBlendingMode_(NSVisualEffectBlendingModeBehindWindow)
     v.setState_(NSVisualEffectStateActive)
-    v.setWantsLayer_(True)
-    v.layer().setCornerRadius_(14.0)
-    v.layer().setMasksToBounds_(True)
+    v.setMaskImage_(rounded_mask(14.0))  # rounds the blur and the window shadow together
     return v
+
+
+def rounded_mask(radius: float) -> NSImage:
+    edge = 2.0 * radius + 1.0
+
+    def draw(rect):
+        NSColor.blackColor().set()
+        NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius_(rect, radius, radius).fill()
+        return True
+
+    img = NSImage.imageWithSize_flipped_drawingHandler_((edge, edge), False, draw)
+    img.setCapInsets_((radius, radius, radius, radius))
+    img.setResizingMode_(1)  # NSImageResizingModeStretch
+    return img
 
 
 def pin_edges(child: NSView, parent: NSView, inset: float = 0.0) -> None:
@@ -228,18 +247,31 @@ def vstack(views: list, spacing: float = 6.0, insets=(0, 0, 0, 0)) -> NSStackVie
     return s
 
 
-def hstack(views: list, spacing: float = 8.0) -> NSStackView:
+def hstack(views: list, spacing: float = 8.0, width: float | None = None) -> NSStackView:
+    """Horizontal row. Pass ``width`` so a spacer() can push trailing items to the edge."""
     s = NSStackView.stackViewWithViews_(views)
     s.setOrientation_(NSUserInterfaceLayoutOrientationHorizontal)
     s.setAlignment_(NSLayoutAttributeCenterY)
+    s.setDistribution_(NSStackViewDistributionFill)
     s.setSpacing_(spacing)
+    if width is not None:
+        s.setTranslatesAutoresizingMaskIntoConstraints_(False)
+        s.widthAnchor().constraintEqualToConstant_(width).setActive_(True)
     return s
 
 
 def spacer() -> NSView:
     v = NSView.alloc().initWithFrame_(NSMakeRect(0, 0, 1, 1))
+    v.setTranslatesAutoresizingMaskIntoConstraints_(False)
+    v.widthAnchor().constraintGreaterThanOrEqualToConstant_(0).setActive_(True)
     v.setContentHuggingPriority_forOrientation_(NSLayoutPriorityDefaultLow - 1, 0)
+    v.setContentCompressionResistancePriority_forOrientation_(NSLayoutPriorityDefaultLow - 1, 0)
     return v
+
+
+def scroller_width() -> float:
+    """Width a legacy (always-visible) vertical scroller takes from the clip view."""
+    return float(NSScroller.scrollerWidthForControlSize_scrollerStyle_(0, NSScrollerStyleLegacy))
 
 
 def label(
@@ -266,7 +298,7 @@ def label(
         f.setFont_(NSFont.systemFontOfSize_(size))
     f.setTextColor_(NSColor.secondaryLabelColor() if secondary else NSColor.labelColor())
     f.setMaximumNumberOfLines_(lines)
-    f.setLineBreakMode_(NSLineBreakByTruncatingTail)
+    f.setLineBreakMode_(NSLineBreakByTruncatingTail if lines == 1 else NSLineBreakByWordWrapping)
     if lines != 1:
         f.cell().setTruncatesLastVisibleLine_(True)
     if width is not None:
@@ -327,10 +359,12 @@ def text_input(placeholder: str, value: str, keep: list, on_text, on_submit) -> 
     f.setTarget_(t)
     f.setAction_("fire:")
     f.setDelegate_(t)
+    f.cell().setSendsActionOnEndEditing_(False)  # only Return submits, never focus loss
     return f
 
 
 def scroll_container(content: NSView, width: float, max_height: float) -> NSScrollView:
+    """``content`` must be at most ``width - scroller_width()`` wide."""
     scroll = NSScrollView.alloc().initWithFrame_(NSMakeRect(0, 0, width, 100))
     scroll.setHasVerticalScroller_(True)
     scroll.setDrawsBackground_(False)

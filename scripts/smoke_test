@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# Manual macOS smoke test for an installed Agent Dock. Run after ./scripts/install.
+# It fires synthetic requests through the real hook; answer them in the drop-down.
+set -euo pipefail
+APP_HOME="${AGENT_DOCK_HOME:-$HOME/Library/Application Support/AgentDock}"
+PY="$APP_HOME/venv/bin/python"
+[ -x "$PY" ] || { echo "Agent Dock is not installed (missing $PY). Run ./scripts/install first." >&2; exit 1; }
+
+step() { printf '\n\033[1m== %s\033[0m\n' "$*"; }
+
+step "1. Diagnostics"
+"$PY" -m agent_dock doctor || true
+
+step "2. Single request — expect the panel to drop down WITHOUT taking focus."
+echo "   Keep typing in this terminal while it appears, then click Allow once."
+"$PY" -m agent_dock simulate --command "echo smoke-test-1"
+
+step "3. Timers — do NOT touch the panel: compact at 10 s, hidden at 30 s, badge stays."
+echo "   Then click the menu-bar icon and Deny it from the inbox."
+"$PY" -m agent_dock simulate --command "echo smoke-test-timers"
+
+step "4. Three concurrent agents — badge should read 3; answer each, badge counts down."
+"$PY" -m agent_dock simulate --count 3 --interval 0.5
+
+step "5. Always-allow option (synthetic Claude suggestion) — open 'Always allow…' and save."
+"$PY" -m agent_dock simulate --command "npm run build" --suggest
+
+step "6. Fallback — quit Agent Dock from the menu-bar icon (right-click → Quit), then press Enter."
+read -r _
+"$PY" -m agent_dock simulate --command "echo should-fall-back"
+echo "   Expected above: 'no decision (native prompt would take over)' within ~1 s."
+echo "   Restart with: launchctl kickstart -k gui/$(id -u)/local.agent-dock"

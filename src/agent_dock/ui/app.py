@@ -71,6 +71,8 @@ class DockController:
         self._signature: object = None
         self._monitor = None
         self._note_field = None
+        self._render_pending = False
+        self._was_pinned = False
 
         self.panel = w.make_panel()
         self.panel.on_escape = self.close_panel
@@ -130,6 +132,7 @@ class DockController:
         ):
             self._show_status_menu()
             return
+        self._clear_sections()
         self.ctl.menu_clicked(time.monotonic())
         self.render()
 
@@ -154,15 +157,17 @@ class DockController:
 
     def open_inbox(self) -> None:
         if self.ctl.mode is not Mode.PINNED:
+            self._clear_sections()
             self.ctl.menu_clicked(time.monotonic())
         self.render()
 
     def close_panel(self) -> None:
+        self._clear_sections()
         self.ctl.close(time.monotonic())
         self.render()
 
     def quit(self) -> None:
-        AppHelper.stopEventLoop()
+        shutdown(self.bt)
 
     def on_enter(self) -> None:
         self.ctl.pointer_entered(time.monotonic())
@@ -197,7 +202,14 @@ class DockController:
         self._sync_lock()
         self.render()
         if self.sections.get(rid) == "deny":
-            self._focus_note_field()
+            # Runs after the queued render, which creates the field.
+            AppHelper.callAfter(self._focus_note_field)
+
+    def _clear_sections(self) -> None:
+        """Closing/hiding the panel abandons open sub-forms (the controller resets its lock)."""
+        self.sections.clear()
+        self._locked = False
+        self._note_field = None
 
     def _close_section(self, rid: str) -> None:
         self.sections.pop(rid, None)
@@ -268,6 +280,13 @@ class DockController:
         btn.setToolTip_(vm.status_accessibility(n))
 
     def render(self) -> None:
+        """Coalesce renders and never rebuild views inside the callback of a view being replaced."""
+        if not self._render_pending:
+            self._render_pending = True
+            AppHelper.callAfter(self._render_now)
+
+    def _render_now(self) -> None:
+        self._render_pending = False
         view = self.ctl.view()
         self._update_status()
         deadline = self.ctl.next_deadline()
@@ -300,8 +319,6 @@ class DockController:
             content, width = self._build_expanded(view), WIDTH
         self._install(content, width, pinned=view.mode is Mode.PINNED)
         del old_keep  # previous targets may be released now that views are gone
-        if self._note_field is not None:
-            self._focus_note_field()
         self._reconcile_pointer()
 
     def _reconcile_pointer(self) -> None:
@@ -315,12 +332,15 @@ class DockController:
             and f.origin.y <= loc.y <= f.origin.y + f.size.height
         )
         if not inside:
-            AppHelper.callAfter(self.on_exit)
+            self.on_exit()
 
     def _hide_panel(self) -> None:
         if self.panel.isVisible():
             self.panel.orderOut_(None)
         self.panel.allow_key = False
+        self._was_pinned = False
+        if self.sections:
+            self._clear_sections()
         self._remove_click_monitor()
 
     def _install(self, content, width: float, *, pinned: bool) -> None:
@@ -345,9 +365,15 @@ class DockController:
 
         if pinned:
             self.panel.allow_key = True
-            self.panel.makeKeyAndOrderFront_(None)
+            if not self._was_pinned:
+                # Only the user's click on the menu-bar icon may take keyboard focus.
+                self.panel.makeKeyAndOrderFront_(None)
+            else:
+                self.panel.orderFrontRegardless()
+            self._was_pinned = True
             self._install_click_monitor()
         else:
+            self._was_pinned = False
             # orderFrontRegardless never activates the app or moves Spaces.
             self.panel.allow_key = bool(self.sections)
             self.panel.orderFrontRegardless()
@@ -393,11 +419,15 @@ class DockController:
             self._monitor = None
 
     def _focus_note_field(self) -> None:
-        field = getattr(self, "_note_field", None)
-        if field is not None:
-            self.panel.allow_key = True
-            self.panel.makeKeyWindow()
-            self.panel.makeFirstResponder_(field)
+        field = self._note_field
+        if field is None or not self.panel.isVisible():
+            return
+        self.panel.allow_key = True
+        self.panel.makeKeyWindow()
+        self.panel.makeFirstResponder_(field)
+        editor = field.currentEditor()
+        if editor is not None:  # caret at end instead of select-all, so typing keeps the draft
+            editor.setSelectedRange_((len(field.stringValue()), 0))
 
     # ---- view builders ------------------------------------------------------------
     def _build_compact(self, view):
@@ -412,7 +442,7 @@ class DockController:
             link=True,
             a11y="Dismiss notification (does not answer the request)",
         )
-        row = w.hstack([dot, text, w.spacer(), close])
+        row = w.hstack([dot, text, w.spacer(), close], width=COMPACT_WIDTH - 24)
         return w.vstack([row], insets=(8, 14, 8, 10))
 
     def _build_expanded(self, view):
@@ -441,15 +471,18 @@ class DockController:
                 w.label(vm.inbox_header(view.badge), secondary=True),
                 w.spacer(),
                 w.button("Hide panel", self.close_panel, self._keep, link=True, key="\x1b"),
-            ]
+            ],
+            width=WIDTH - 28,
         )
+        # Leave room for an always-visible scroller so cards never overflow the clip view.
+        card_inner = WIDTH - 28 - w.scroller_width() - 16
         cards = []
         for rid in view.pending:
             env = self.envelopes.get(rid)
             if env is None:
                 continue
             cv = w.vstack(
-                self._card_views(env, view, inner_width=WIDTH - 44, reveal=True, transient=False),
+                self._card_views(env, view, inner_width=card_inner, reveal=True, transient=False),
                 spacing=6,
                 insets=(10, 8, 10, 8),
             )
@@ -484,7 +517,8 @@ class DockController:
                     link=True,
                     a11y="Dismiss (hide without answering)",
                 ),
-            ]
+            ],
+            width=inner_width,
         )
         sub = c.subtitle + ("  ·  dismissed" if c.dismissed and not transient else "")
         views = [title_row, w.label(sub, size=11, secondary=True, width=inner_width)]
@@ -506,7 +540,7 @@ class DockController:
         row = [allow, deny]
         if not transient and rid != view.selected:
             row.append(w.button("Select", lambda: self.select(rid), k, link=True))
-        views.append(w.hstack(row + [w.spacer()]))
+        views.append(w.hstack(row + [w.spacer()], width=inner_width))
 
         extras = [
             w.button("Deny with note…", lambda: self.toggle_section(rid, "deny"), k, link=True),
@@ -528,7 +562,7 @@ class DockController:
             extras.append(
                 w.button("Open terminal ↗", lambda: self.open_terminal(rid), k, link=True)
             )
-        views.append(w.hstack(extras + [w.spacer()], spacing=10))
+        views.append(w.hstack(extras + [w.spacer()], spacing=10, width=inner_width))
 
         section = self.sections.get(rid)
         if section == "deny":
@@ -550,7 +584,8 @@ class DockController:
                         ),
                         w.button("Cancel", lambda: self.toggle_section(rid, "deny"), k, link=True),
                         w.spacer(),
-                    ]
+                    ],
+                    width=inner_width,
                 )
             )
         elif section == "always":
@@ -618,9 +653,25 @@ def run_app(bt: BrokerThread, settings: Settings) -> None:
 
         from PyObjCTools import MachSignals
 
-        MachSignals.signal(signal.SIGTERM, lambda _sig: AppHelper.stopEventLoop())
+        # runEventLoop(installInterrupt=True) is a no-op once NSApp exists, so do it here.
+        for sig in (signal.SIGTERM, signal.SIGINT):
+            MachSignals.signal(sig, lambda _sig: shutdown(bt))
     except Exception:  # noqa: BLE001
-        log.debug("could not install SIGTERM handler", exc_info=True)
+        log.warning("could not install signal handlers", exc_info=True)
+
+    def on_unexpected_error() -> bool:
+        # Default shows a modal alert that activates the app; log and keep running instead.
+        log.exception("unexpected error in UI callback")
+        return True
 
     log.info("Agent Dock menu-bar UI running")
-    AppHelper.runEventLoop(installInterrupt=True)
+    AppHelper.runEventLoop(unexpectedErrorAlert=on_unexpected_error)
+
+
+def shutdown(bt: BrokerThread) -> None:
+    """Stop the broker (expires pending requests -> agents show native prompts, socket removed)
+    before AppKit terminates the process with exit(), which skips Python finally blocks."""
+    try:
+        bt.stop()
+    finally:
+        AppHelper.stopEventLoop()
