@@ -1,0 +1,71 @@
+#!/usr/bin/env bash
+# Install Agent Dock for the current macOS user.
+#
+# Usage: scripts/install [--no-claude] [--no-codex] [--no-launch-agent]
+#
+# Creates a private virtualenv under "$AGENT_DOCK_HOME" (default:
+# ~/Library/Application Support/AgentDock/venv), installs this checkout into it
+# (non-editable, so moving or deleting the repo does not break the hooks), then
+# runs `python -m agent_dock install`, which:
+#   - merges a PermissionRequest hook into ~/.claude/settings.json
+#   - merges a PermissionRequest hook into ~/.codex/hooks.json
+#     (afterwards run /hooks inside Codex and trust the Agent Dock hook)
+#   - writes and loads the login LaunchAgent (~/Library/LaunchAgents/local.agent-dock.plist)
+# Existing config is backed up to "$AGENT_DOCK_HOME/backups" before any change.
+# The hook timeout comes from settings.hook_timeout_seconds.
+#
+# Flags are passed to `python -m agent_dock install`:
+#   --no-claude         skip the Claude Code hook
+#   --no-codex          skip the Codex hook
+#   --no-launch-agent   do not install/load the login LaunchAgent
+#
+# Environment:
+#   AGENT_DOCK_HOME            install root (default: ~/Library/Application Support/AgentDock)
+#   AGENT_DOCK_PYTHON_VERSION  Python for the venv (default: 3.12)
+#   AGENT_DOCK_ALLOW_NON_MACOS=1  allow running on non-macOS (testing only)
+set -euo pipefail
+
+case "${1:-}" in
+  -h|--help) sed -n '2,/^set -euo/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//'; exit 0 ;;
+esac
+
+if [ "$(uname -s)" != "Darwin" ] && [ "${AGENT_DOCK_ALLOW_NON_MACOS:-}" != "1" ]; then
+  echo "agent-dock: this installer only supports macOS (set AGENT_DOCK_ALLOW_NON_MACOS=1 to override for testing)." >&2
+  exit 1
+fi
+
+if ! command -v uv >/dev/null 2>&1; then
+  echo "agent-dock: 'uv' is required but was not found on PATH." >&2
+  echo "Install it with:" >&2
+  echo "    curl -LsSf https://astral.sh/uv/install.sh | sh" >&2
+  echo "then open a new terminal and re-run this script." >&2
+  exit 1
+fi
+
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+REPO="$(cd -- "$SCRIPT_DIR/.." && pwd -P)"
+APP_HOME="${AGENT_DOCK_HOME:-$HOME/Library/Application Support/AgentDock}"
+VENV="$APP_HOME/venv"
+PY="$VENV/bin/python"
+PYVER="${AGENT_DOCK_PYTHON_VERSION:-3.12}"
+
+if [ ! -f "$REPO/pyproject.toml" ]; then
+  echo "agent-dock: cannot find pyproject.toml in $REPO" >&2
+  exit 1
+fi
+
+umask 077
+mkdir -p "$APP_HOME"
+chmod 700 "$APP_HOME"
+
+echo "==> Creating virtualenv in $VENV (Python $PYVER)"
+# --allow-existing keeps an existing venv in place (re-install), so hook
+# commands that point at "$PY" keep working throughout the upgrade.
+uv venv --quiet --python "$PYVER" --allow-existing "$VENV"
+
+echo "==> Installing Agent Dock from $REPO"
+uv pip install --quiet --python "$PY" --reinstall "$REPO"
+
+echo "==> Configuring hooks and LaunchAgent"
+export AGENT_DOCK_HOME="$APP_HOME"
+exec "$PY" -m agent_dock install "$@"

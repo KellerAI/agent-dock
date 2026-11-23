@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+# Uninstall Agent Dock for the current macOS user.
+#
+# Usage: scripts/uninstall [--purge] [--no-claude] [--no-codex] [--no-launch-agent]
+#
+# Runs `python -m agent_dock uninstall`, which unloads/removes the LaunchAgent and
+# removes only Agent Dock's own hook entries from ~/.claude/settings.json and
+# ~/.codex/hooks.json (other hooks and settings are left untouched; a backup is
+# taken first).
+#
+#   --purge             additionally delete the virtualenv and runtime dir
+#                       ("$AGENT_DOCK_HOME/venv" and "$AGENT_DOCK_HOME/run").
+#                       Backups and settings.json are kept.
+#   --no-claude / --no-codex / --no-launch-agent   passed through
+#
+# Environment:
+#   AGENT_DOCK_HOME   install root (default: ~/Library/Application Support/AgentDock)
+set -euo pipefail
+
+case "${1:-}" in
+  -h|--help) sed -n '2,/^set -euo/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//'; exit 0 ;;
+esac
+
+APP_HOME="${AGENT_DOCK_HOME:-$HOME/Library/Application Support/AgentDock}"
+PY="$APP_HOME/venv/bin/python"
+
+PURGE=0
+ARGS=()
+for arg in "$@"; do
+  case "$arg" in
+    --purge) PURGE=1 ;;
+    *) ARGS+=("$arg") ;;
+  esac
+done
+
+if [ -x "$PY" ]; then
+  export AGENT_DOCK_HOME="$APP_HOME"
+  "$PY" -m agent_dock uninstall ${ARGS[@]+"${ARGS[@]}"}
+else
+  echo "agent-dock: $PY not found; cannot remove hooks automatically." >&2
+  echo "Remove entries containing '-m agent_dock.hook' from ~/.claude/settings.json and ~/.codex/hooks.json," >&2
+  echo "and run: launchctl bootout gui/\$(id -u)/local.agent-dock; rm ~/Library/LaunchAgents/local.agent-dock.plist" >&2
+  if [ "$PURGE" != "1" ]; then exit 1; fi
+fi
+
+if [ "$PURGE" = "1" ]; then
+  case "$APP_HOME" in
+    */AgentDock|*/AgentDock/|*/agent-dock|*/agent-dock/) ;;
+    *)
+      echo "agent-dock: refusing to purge '$APP_HOME' (does not end in AgentDock)." >&2
+      exit 1 ;;
+  esac
+  rm -rf -- "$APP_HOME/venv" "$APP_HOME/run"
+  echo "Purged $APP_HOME/venv and $APP_HOME/run."
+fi
+
+if [ -d "$APP_HOME/backups" ]; then
+  echo "Config backups are kept in: $APP_HOME/backups"
+fi
