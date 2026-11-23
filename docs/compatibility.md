@@ -51,3 +51,45 @@ Resolver rules:
 - Lines over 1 MiB, invalid JSON, partial last lines and non-UTF-8 bytes are skipped or tolerated.
 - Titles are cleaned with `text.one_line(limit=120)`.
 - Results are cached per file by `(st_mtime_ns, st_size)`.
+
+## PermissionRequest hook — Phase 0 results
+
+### Claude Code 2.1.330 (Linux dev sandbox, `claude -p`, 2026-11-23)
+
+Driven with a real `claude -p` run, `--settings` adding only the Agent Dock hook,
+and an auto-answering broker (`scripts`-free harness; see commit history).
+
+| Case | Result |
+|---|---|
+| Allow once | `{"behavior":"allow"}` → command ran, file created |
+| Deny + message | `{"behavior":"deny","message":…}` → command not run, model reported it was blocked |
+| Always allow (echo suggestion 0) | Accepted; command ran |
+| No broker running | Hook prints nothing within ~0.5 s; agent continues with its native flow (in `-p` mode that means the call is denied, as documented) |
+
+Observed input details:
+- `permission_suggestions` for a `touch` in the project directory contained **no `addRules`
+  entry**. It contained `addDirectories` (destination `session`) and `setMode` →
+  `acceptEdits` (destination `session`). Never assume a command-level rule exists:
+  the UI only lists what the agent sent.
+- `TERM_PROGRAM` is inherited by the hook process (observed `ghostty`), so "Open terminal"
+  can target the right app.
+- `transcript_path` and `session_id` are always present; `permission_mode` was `default`.
+
+Still to verify on the Mac (interactive CLI, not `-p`):
+- Whether the native permission dialog is shown while the hook is blocked, and what happens
+  to it when the hook answers (expected: dialog dismissed/never shown).
+- Behaviour when the request times out (45 s) — the native dialog must appear.
+- Claude Desktop / IDE extensions: confirm hooks fire.
+
+### Codex
+
+Not installed in the sandbox. From the official docs (developers.openai.com/codex/hooks,
+fetched 2026-11-23):
+- Hooks are enabled by default (`[features] hooks = false` disables; `codex_hooks` is a
+  deprecated alias). No config.toml change is needed.
+- User hooks live in `$CODEX_HOME/hooks.json`; **non-managed hooks must be trusted via
+  `/hooks`**, and trust is pinned to the hook's hash — changing the command string requires
+  re-trust. The installer therefore keeps the command byte-identical across reinstalls.
+- Output: only `behavior` allow/deny and `message`. `updatedInput`, `updatedPermissions`
+  and `interrupt` fail closed and are never emitted.
+- Matcher is a regex; `"*"` matches all tools (`Bash`, `apply_patch`, `mcp__…`).
