@@ -64,7 +64,10 @@ TRANSITIONS: dict[RequestState, frozenset[RequestState]] = {
             RequestState.FALLBACK,
         }
     ),
-    RequestState.CLAIMED: frozenset({RequestState.RESOLVED, RequestState.CANCELLED}),
+    # CLAIMED -> FALLBACK when the user explicitly chose "answer in terminal".
+    RequestState.CLAIMED: frozenset(
+        {RequestState.RESOLVED, RequestState.CANCELLED, RequestState.FALLBACK}
+    ),
 }
 
 
@@ -161,7 +164,9 @@ class Envelope:
                 raise ValueError(f"{key} must be a string")
             return v[:limit]
 
-        tool_input = d.get("tool_input") or {}
+        tool_input = d.get("tool_input")
+        if tool_input is None:
+            tool_input = {}
         if not isinstance(tool_input, dict):
             raise ValueError("tool_input must be an object")
         actions = d.get("supported_actions") or []
