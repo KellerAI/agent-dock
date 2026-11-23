@@ -93,3 +93,13 @@ fetched 2026-11-23):
 - Output: only `behavior` allow/deny and `message`. `updatedInput`, `updatedPermissions`
   and `interrupt` fail closed and are never emitted.
 - Matcher is a regex; `"*"` matches all tools (`Bash`, `apply_patch`, `mcp__…`).
+
+## macOS UI — smoke test (2026-11-23)
+
+`scripts/smoke_test` passed on the user's Mac: non-activating drop-down, 10 s / 30 s timers,
+menu-bar badge and inbox, three concurrent requests, always-allow form, and native fallback
+after quitting the app all behaved as specified.
+
+Not yet covered by that run: interactive Claude Code CLI (native dialog while the hook waits,
+45 s timeout hand-off), real Codex sessions and `/hooks` trust, full-screen apps / Stage Manager,
+multiple displays, VoiceOver.
