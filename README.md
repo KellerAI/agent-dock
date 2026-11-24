@@ -5,6 +5,11 @@ don't have to find the right Terminal tab, window or Space. A drop-down shows up
 screen without taking focus. You click **Allow once** or **Deny**, and the answer goes back to the
 exact session that's waiting.
 
+<p align="center">
+  <img src="docs/images/permission-panel.png" width="640"
+       alt="Agent Dock panel below the macOS menu bar showing a Claude Code request to run touch dock-allow.txt, with Allow once and Deny buttons">
+</p>
+
 - Local only. A per-user Unix socket (mode 0600, inside a 0700 folder). No network, no analytics.
 - Fails safe. If Agent Dock isn't running, crashes, or you don't answer within 45 s, the hook
   returns *no decision* and the agent shows its own prompt as usual. Nothing is ever allowed
